@@ -19,11 +19,11 @@ def generate_recommendations(df: pd.DataFrame) -> pd.DataFrame:
     recs = []
 
     for _, row in df.iterrows():
-        findings = row.get("rule_findings", "")
-        if findings == "No issues":
+        codes = str(row.get("rule_codes", ""))
+        if not codes:
             recs.append("TLS configuration is PQC-ready")
         else:
-            vuln_list = findings.split("; ")
+            vuln_list = codes.split(";")
             mapped = [map_vulnerability(v) for v in vuln_list if v]
             recs.append("; ".join(mapped))
 

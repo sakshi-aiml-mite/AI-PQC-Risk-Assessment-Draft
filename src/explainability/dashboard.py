@@ -5,6 +5,7 @@ Interactive dashboard using Plotly + Dash to visualize SHAP explanations.
 
 import shap
 import dash
+import pandas as pd
 from dash import dcc, html
 import plotly.express as px
 

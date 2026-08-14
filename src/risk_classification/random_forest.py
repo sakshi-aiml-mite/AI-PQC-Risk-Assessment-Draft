@@ -19,9 +19,9 @@ def train_random_forest(df: pd.DataFrame, features: list, target: str, random_st
     Returns:
         model (RandomForestClassifier): Trained model
     """
-    X = df[features].fillna(-1)
+    X = df[features].fillna(0)
     y = df[target]
-    model = RandomForestClassifier(random_state=random_state)
+    model = RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=random_state)
     model.fit(X, y)
     return model
 
@@ -37,6 +37,8 @@ def classify_risk(model, df: pd.DataFrame, features: list) -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame with predicted risk labels
     """
-    X = df[features].fillna(-1)
-    df["predicted_risk"] = model.predict(X)
-    return df
+    result = df.copy()
+    probabilities = model.predict_proba(result[features].fillna(0))
+    result["predicted_risk"] = model.classes_[probabilities.argmax(axis=1)]
+    result["risk_confidence"] = probabilities.max(axis=1)
+    return result

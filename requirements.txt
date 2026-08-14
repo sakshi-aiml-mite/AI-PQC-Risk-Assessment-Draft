@@ -1,6 +1,7 @@
 # Core libraries
 numpy
 pandas
+openpyxl
 scikit-learn
 
 # Explainability
