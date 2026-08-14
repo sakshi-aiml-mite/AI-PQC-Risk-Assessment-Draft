@@ -20,13 +20,33 @@ It combines deterministic rule scanning, anomaly detection, risk classification,
 
 ## Project Structure
 
----
+```text
+data/
+  example_tls.csv
+src/
+  data_ingestion/
+  rule_scanner/
+  anomaly_detection/
+  risk_classification/
+  recommendations/
+  explainability/
+  utils/
+  main.py
+notebooks/
+  demo_pipeline.ipynb
+tests/
+  test_pipeline.py
+docs/
+  methodology.md
+  architecture.png
+
+```
 
 ## Installation
 ```bash
 # Clone repo
-git clone https://github.com/yourusername/ai-pqc-pipeline.git
-cd ai-pqc-pipeline
+git clone https://github.com/sakshi-aiml-mite/AI-PQC-Risk-Assessment-Draft
+cd AI-PQC-Risk-Assessment-Draft
 
 # Create virtual environment
 python -m venv venv
