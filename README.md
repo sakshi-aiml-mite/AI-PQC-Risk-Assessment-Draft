@@ -1,58 +1,87 @@
-# AI-PQC Risk Assessment Pipeline
+# AI-PQC Risk Assessment
 
-## Overview
-This project implements an **AI-driven Post-Quantum Cryptography (PQC) Risk Assessment Pipeline** for TLS configurations.  
-It combines deterministic rule scanning, anomaly detection, risk classification, recommendations, and explainability to guide secure migration paths aligned with NIST standards.
+An offline application that evaluates TLS cryptographic configurations for post-quantum risk. It combines rule-based checks, Isolation Forest anomaly detection, Random Forest risk classification, NIST-aligned migration guidance, and a downloadable PDF audit report.
 
----
+## What it does
 
-## Features
-- **Data Ingestion**: Load TLS metadata from CSV/JSON or simulate SIEM logs.
-- **Rule Scanner**: Deterministic checks for weak keys, deprecated algorithms, and null values.
-- **Anomaly Detection**: Isolation Forest to flag unusual TLS configurations.
-- **Risk Classification**: Random Forest classifier for risk scoring (High/Medium/Low).
-- **Recommendations**: Maps vulnerabilities to NIST PQC migration paths.
-- **Explainability**: SHAP-based insights, interactive dashboard, and PDF reports.
-- **Utilities**: Config, logging, and preprocessing helpers.
-- **Testing**: Unit tests with `pytest`.
+- Imports TLS metadata from CSV, JSON, XLS, or XLSX files.
+- Labels each configuration as Low, Medium, or High risk.
+- Flags weak RSA/DH keys, SHA-1, missing cryptographic metadata, TLS 1.2, and CBC suites.
+- Recommends migration actions such as TLS 1.3 adoption and hybrid ML-KEM key exchange planning.
+- Provides a local browser UI with CSV upload, results preview, and PDF download.
+- Runs locally; assessment data is not sent to an external service.
 
----
+## Requirements
 
-## Project Structure
+- Python 3.10 or later
+- Git (only needed to clone the repository)
+- A modern web browser for the dashboard
 
-```text
-data/
-  example_tls.csv
-src/
-  data_ingestion/
-  rule_scanner/
-  anomaly_detection/
-  risk_classification/
-  recommendations/
-  explainability/
-  utils/
-  main.py
-notebooks/
-  demo_pipeline.ipynb
-tests/
-  test_pipeline.py
-docs/
-  methodology.md
-  architecture.png
+## Clone and run
 
+```bash
+git clone https://github.com/sakshi-aiml-mite/AI-PQC-Risk-Assessment-Draft.git
+cd AI-PQC-Risk-Assessment-Draft
+python -m venv .venv
 ```
 
-## Installation
+Activate the virtual environment:
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+```
+
 ```bash
-# Clone repo
-git clone https://github.com/sakshi-aiml-mite/AI-PQC-Risk-Assessment-Draft
-cd AI-PQC-Risk-Assessment-Draft
+# macOS or Linux
+source .venv/bin/activate
+```
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate   # Linux/Mac
-venv\Scripts\activate      # Windows
+Install dependencies and launch the local UI:
 
-# Install dependencies
-pip install -r requirements.txt
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m src.ui.dashboard
+```
 
+Open `http://127.0.0.1:8050` in a browser. Upload a CSV, select **Generate risk report** to view the assessment, then select **Download PDF report** to download it. Stop the server with `Ctrl+C`.
+
+## Input CSV schema
+
+The dashboard requires these columns:
+
+```text
+protocol_version,key_exchange_algorithm,key_size,certificate_signature_algorithm,cipher_suite
+```
+
+Example:
+
+```csv
+TLS1.3,ECDHE,256,ECDSA-SHA256,TLS_AES_256_GCM_SHA384
+TLS1.2,RSA,1024,SHA1-RSA,TLS_RSA_WITH_AES_128_CBC_SHA
+```
+
+## Sample files
+
+Five small import-ready CSV files are in `sample_imports/`:
+
+- `01_high_risk.csv`
+- `02_mixed_risk.csv`
+- `03_missing_metadata.csv`
+- `04_tls12_upgrade.csv`
+- `05_low_risk.csv`
+
+## Command-line usage
+
+To generate a report without opening the UI:
+
+```bash
+python -m src.main --input sample_imports/02_mixed_risk.csv --output results/assessment.pdf
+```
+
+## Tests
+
+```bash
+python -m pytest -q
+```
