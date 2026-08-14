@@ -17,5 +17,9 @@ reportlab
 # Testing
 pytest
 
+# Notebook demo
+jupyter
+ipykernel
+
 # Logging & utilities
 python-dotenv
