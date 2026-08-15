@@ -12,7 +12,7 @@ import plotly.express as px
 def launch_dashboard(shap_values, df, features):
     """
     Launch a Dash dashboard to visualize SHAP values.
-    
+
     Args:
         shap_values: SHAP values object
         df (pd.DataFrame): TLS metadata DataFrame
@@ -27,6 +27,19 @@ def launch_dashboard(shap_values, df, features):
         y=features,
         orientation="h",
         title="Feature Importance (SHAP)"
+    )
+    fig.update_traces(
+        marker_color="rgba(92, 211, 210, 0.68)",
+        marker_line_color="rgba(213, 249, 245, 0.8)",
+        marker_line_width=1.5,
+        opacity=0.88
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#C4D3EA", family="Inter, sans-serif"),
+        title_font=dict(size=16, color="#F6F9FF"),
+        hoverlabel=dict(bgcolor="rgba(16, 26, 58, 0.82)", bordercolor="rgba(135, 220, 208, 0.5)", font_color="#FFFFFF")
     )
 
     app.layout = html.Div([

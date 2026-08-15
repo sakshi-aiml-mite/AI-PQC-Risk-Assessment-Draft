@@ -45,7 +45,7 @@ python -m pip install -r requirements.txt
 python -m src.ui.dashboard
 ```
 
-Open `http://127.0.0.1:8050` in a browser. Upload a CSV, select **Generate risk report** to view the assessment, then select **Download PDF report** to download it. Stop the server with `Ctrl+C`.
+Open `http://127.0.0.1:8050` in a browser. Upload a CSV to view the assessment, then select the green **Download Report** button to download the PDF. Stop the server with `Ctrl+C`.
 
 ## Input CSV schema
 
@@ -64,20 +64,20 @@ TLS1.2,RSA,1024,SHA1-RSA,TLS_RSA_WITH_AES_128_CBC_SHA
 
 ## Sample files
 
-Five small import-ready CSV files are in `sample_imports/`:
+Five import-ready CSV files are in `sample_imports/`:
 
-- `01_high_risk.csv`
-- `02_mixed_risk.csv`
-- `03_missing_metadata.csv`
-- `04_tls12_upgrade.csv`
-- `05_low_risk.csv`
+- `01_legacy_risk.csv`
+- `02_balanced_risk.csv`
+- `03_missing_metadata_mix.csv`
+- `04_tls12_remediation.csv`
+- `05_modernized_baseline.csv`
 
 ## Command-line usage
 
 To generate a report without opening the UI:
 
 ```bash
-python -m src.main --input sample_imports/02_mixed_risk.csv --output results/assessment.pdf
+python -m src.main --input sample_imports/02_balanced_risk.csv --output results/assessment.pdf
 ```
 
 ## Tests

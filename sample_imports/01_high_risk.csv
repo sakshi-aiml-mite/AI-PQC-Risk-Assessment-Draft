@@ -1,4 +1,0 @@
-protocol_version,key_exchange_algorithm,key_size,certificate_signature_algorithm,cipher_suite
-TLS1.2,RSA,1024,SHA1-RSA,TLS_RSA_WITH_AES_128_CBC_SHA
-TLS1.2,DH,1024,SHA256-RSA,TLS_DHE_RSA_WITH_AES_128_CBC_SHA
-TLS1.3,RSA,1024,SHA1-RSA,TLS_RSA_WITH_AES_256_GCM_SHA384

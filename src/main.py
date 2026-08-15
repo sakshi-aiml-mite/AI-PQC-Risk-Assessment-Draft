@@ -35,8 +35,10 @@ def _bootstrap_risk_labels(df: pd.DataFrame) -> pd.Series:
     return df["rule_codes"].map(label)
 
 
-def assess_dataframe(raw: pd.DataFrame, output_path: str | Path = REPORT_PATH) -> pd.DataFrame:
-    """Assess a TLS metadata DataFrame and write an audit-ready PDF report."""
+def assess_dataframe(
+    raw: pd.DataFrame, output_path: str | Path | None = REPORT_PATH, *, generate_pdf: bool = True
+) -> pd.DataFrame:
+    """Assess TLS metadata and optionally write an audit-ready PDF report."""
     validate_schema(raw)
     raw = scan_tls_config(raw.copy())
     features = preprocess_data(raw)
@@ -57,8 +59,13 @@ def assess_dataframe(raw: pd.DataFrame, output_path: str | Path = REPORT_PATH) -
     raw.attrs["shap_values"] = explain_model(classifier, features, feature_columns)
     counts = raw["predicted_risk"].value_counts()
     stats = {"total": len(raw), "high": counts.get("High", 0), "medium": counts.get("Medium", 0), "low": counts.get("Low", 0)}
-    generate_report(output_path, raw, stats)
-    logger.info("Assessment complete: %s", output_path)
+    if generate_pdf:
+        if output_path is None:
+            raise ValueError("An output path is required when generating a PDF report.")
+        generate_report(output_path, raw, stats)
+        logger.info("Assessment complete: %s", output_path)
+    else:
+        logger.info("Assessment complete; dashboard data is ready.")
     return raw
 
 
