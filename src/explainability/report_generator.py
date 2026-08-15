@@ -194,11 +194,18 @@ def _donut_chart(stats, readiness):
     fig, ax = plt.subplots(figsize=(3.4, 2.7))
     wedges, _, autotexts = ax.pie(
         values, colors=[RISK_HEX[l] for l in labels], startangle=90,
-        autopct=lambda p: f"{p:.0f}%" if p else "",
+        autopct=lambda p: f"{p:.0f}%" if p > 3 else "",   # hide labels on tiny slivers
+        pctdistance=0.79,                                 # <- puts % ON the ring, not in the hole
         wedgeprops=dict(width=0.42, edgecolor="white", linewidth=2))
-    for t in autotexts:
-        t.set_color("white"); t.set_fontsize(8); t.set_fontweight("bold")
-    ax.text(0, 0.05, f"{readiness}%", ha="center", va="center", fontsize=17, fontweight="bold", color="#0F172A")
+    for t in autotexts:                                   # crisp, centred, non-rotated labels
+        t.set_color("white")
+        t.set_fontsize(8)
+        t.set_fontweight("bold")
+        t.set_rotation(0)
+        t.set_ha("center")
+        t.set_va("center")
+    ax.text(0, 0.05, f"{readiness}%", ha="center", va="center",
+            fontsize=17, fontweight="bold", color="#0F172A")
     ax.text(0, -0.16, "ready", ha="center", va="center", fontsize=8.5, color="#64748B")
     ax.legend(wedges, [f"{l}  ({v})" for l, v in zip(labels, values)],
               loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=3, frameon=False, fontsize=7.5)
@@ -213,19 +220,35 @@ def _heatmap_figure(frame):
         cross = cross.reindex(columns=["High", "Medium", "Low"], fill_value=0)
     except Exception:
         return None
+
     fig, ax = plt.subplots(figsize=(4.4, 2.7))
+
+    def _annotate(matrix):
+        """Numeric label in every cell, with contrast-aware text colour."""
+        vmax = float(matrix.values.max()) if matrix.values.size else 0.0
+        for i in range(matrix.shape[0]):
+            for j in range(matrix.shape[1]):
+                v = int(matrix.values[i, j])
+                text_color = "white" if vmax and v >= 0.55 * vmax else "#0F172A"
+                ax.text(j, i, v, ha="center", va="center",
+                        fontsize=9, fontweight="bold", color=text_color)
+
     if sns is not None:
         sns.heatmap(cross, annot=True, fmt="d", cmap="YlOrRd", vmin=0, cbar=False,
-                    linewidths=1.5, linecolor="white", ax=ax, annot_kws={"size": 9, "color": "#0F172A"})
+                    linewidths=1.5, linecolor="white", ax=ax,
+                    annot_kws={"size": 9, "fontweight": "bold", "color": "#0F172A"})
     else:
         ax.imshow(cross.values, cmap="YlOrRd", aspect="auto")
-        ax.set_xticks(range(len(cross.columns))); ax.set_xticklabels(cross.columns)
-        ax.set_yticks(range(len(cross.index))); ax.set_yticklabels(cross.index)
-    ax.set_xlabel(""); ax.set_ylabel("")
+        ax.set_xticks(range(len(cross.columns)))
+        ax.set_xticklabels(cross.columns)
+        ax.set_yticks(range(len(cross.index)))
+        ax.set_yticklabels(cross.index)
+        _annotate(cross)          # <- the numeric labels that were missing
+    ax.set_xlabel("")
+    ax.set_ylabel("")
     ax.tick_params(length=0)
     return fig
-
-
+    
 def _drivers_figure(frame):
     try:
         series = frame["rule_findings"].fillna("").astype(str).str.split(";").explode().str.strip()
