@@ -16,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
 from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
@@ -165,6 +166,37 @@ def _make_cover(report_id, timestamp):
     return _cover
 
 
+def _make_clean_footer(report_id):
+    def _footer(canvas, document):
+        width, _ = document.pagesize
+        canvas.saveState()
+        canvas.setStrokeColor(LIGHT); canvas.setLineWidth(0.6)
+        canvas.line(14 * mm, 12 * mm, width - 14 * mm, 12 * mm)
+        canvas.setFillColor(MUTED); canvas.setFont("Helvetica", 7.5)
+        canvas.drawString(14 * mm, 8 * mm, f"Q-SHIELD | AI-PQC TLS Risk Assessment | REPORT ID: {report_id} | LOCAL & CONFIDENTIAL")
+        canvas.drawRightString(width - 14 * mm, 8 * mm, f"Page {document.page}")
+        canvas.restoreState()
+    return _footer
+
+
+def _make_clean_cover(report_id, timestamp):
+    """Reuse the existing cover art, replacing only its metadata typography."""
+    original = _make_cover(report_id, timestamp)
+    def _cover(canvas, document):
+        original(canvas, document)
+        w, h = document.pagesize
+        canvas.saveState()
+        canvas.setFillColor(colors.white)
+        canvas.rect(15 * mm, h - 120 * mm, 115 * mm, 18 * mm, fill=1, stroke=0)
+        canvas.setFillColor(MUTED); canvas.setFont("Helvetica-Bold", 8.5)
+        canvas.drawString(16 * mm, h - 106 * mm, f"REPORT ID: {report_id}")
+        canvas.setFont("Helvetica", 8.5); canvas.drawString(16 * mm, h - 111 * mm, f"Generated {timestamp}")
+        canvas.setFillColor(ACCENT); canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawString(16 * mm, h - 117 * mm, "LOCAL-ONLY | CONFIDENTIAL | NIST PQC ALIGNED")
+        canvas.restoreState()
+    return _cover
+
+
 # ------------------------------------------------------------------ charts
 def _radar_figure(scores):
     labels = list(scores.keys())
@@ -287,13 +319,165 @@ def _shap_figure(model, frame, features):
     return fig
 
 
+def _model_metrics(frame):
+    """Return report-safe evaluation summaries for the two pipeline models.
+
+    The classifier is evaluated against the risk labels available in the input.
+    Isolation Forest is evaluated against the explicit report reference that a
+    High risk label represents an anomaly.
+    """
+    classifier = {
+        "accuracy": None, "precision": None, "recall": None, "f1": None,
+        "confusion": None, "expected": None, "predicted": None, "output_labels": None, "samples": 0,
+    }
+    required = {"risk_label", "predicted_risk"}
+    if required.issubset(frame.columns):
+        evaluated = frame.loc[:, ["risk_label", "predicted_risk"]].dropna()
+        if not evaluated.empty:
+            truth = evaluated["risk_label"].astype(str)
+            predicted = evaluated["predicted_risk"].astype(str)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                truth, predicted, average="weighted", zero_division=0
+            )
+            output_labels = sorted(set(truth) | set(predicted))
+            label_codes = {label: index for index, label in enumerate(output_labels)}
+            classifier = {
+                "accuracy": accuracy_score(truth, predicted),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "confusion": (output_labels, confusion_matrix(truth, predicted).tolist()),
+                "expected": [label_codes[value] for value in truth],
+                "predicted": [label_codes[value] for value in predicted],
+                "output_labels": output_labels,
+                "samples": len(evaluated),
+            }
+
+    anomaly = {
+        "accuracy": None, "precision": None, "recall": None, "f1": None,
+        "confusion": None, "expected": None, "predicted": None, "output_labels": None, "samples": 0,
+    }
+    if {"risk_label", "anomaly_label"}.issubset(frame.columns):
+        evaluated = frame.loc[:, ["risk_label", "anomaly_label"]].dropna()
+        if not evaluated.empty:
+            truth = evaluated["risk_label"].astype(str).eq("High")
+            predicted = pd.to_numeric(evaluated["anomaly_label"], errors="coerce").eq(-1)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                truth, predicted, average="binary", pos_label=True, zero_division=0
+            )
+            anomaly = {
+                "accuracy": accuracy_score(truth, predicted),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "confusion": (["Normal", "Anomaly"], confusion_matrix(truth, predicted, labels=[False, True]).tolist()),
+                "expected": truth.astype(int).tolist(),
+                "predicted": predicted.astype(int).tolist(),
+                "output_labels": ["Normal", "Anomaly"],
+                "samples": len(evaluated),
+            }
+    return classifier, anomaly
+
+
+def _metric_value(value, *, percentage=False, fallback="Not available"):
+    if value is None or pd.isna(value):
+        return fallback
+    return f"{value:.1%}" if percentage else f"{value:.3f}"
+
+
+def _confusion_matrix_figure(metrics, title):
+    """Draw a confusion matrix rather than placing its raw values in a table."""
+    if metrics["confusion"] is None:
+        return None
+    labels, matrix = metrics["confusion"]
+    values = np.asarray(matrix)
+    fig, ax = plt.subplots(figsize=(3.45, 2.45))
+    image = ax.imshow(values, cmap="Blues")
+    threshold = values.max() / 2 if values.size else 0
+    for row in range(values.shape[0]):
+        for column in range(values.shape[1]):
+            ax.text(column, row, str(values[row, column]), ha="center", va="center",
+                    fontsize=10, fontweight="bold",
+                    color="white" if values[row, column] > threshold else "#0F172A")
+    ax.set_xticks(range(len(labels)), labels, fontsize=7.5)
+    ax.set_yticks(range(len(labels)), labels, fontsize=7.5)
+    ax.set_xlabel("Predicted", fontsize=8, color="#64748B")
+    ax.set_ylabel("Actual", fontsize=8, color="#64748B")
+    ax.set_title(title, fontsize=9.5, fontweight="bold", color="#0F172A", pad=7)
+    ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(labels), 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.5)
+    ax.tick_params(which="minor", bottom=False, left=False)
+    fig.colorbar(image, ax=ax, fraction=0.045, pad=0.04).ax.tick_params(labelsize=6)
+    return fig
+
+
+def _expected_vs_predicted_figure(metrics, title):
+    """Compare actual class totals with predicted class totals using grouped bars."""
+    expected = metrics.get("expected")
+    predicted = metrics.get("predicted")
+    labels = metrics.get("output_labels")
+    if not expected or not predicted or not labels:
+        return None
+    expected_counts = np.bincount(np.asarray(expected, dtype=int), minlength=len(labels))
+    predicted_counts = np.bincount(np.asarray(predicted, dtype=int), minlength=len(labels))
+    positions = np.arange(len(labels)); width = 0.36
+    fig, ax = plt.subplots(figsize=(5.2, 2.4))
+    ax.bar(positions - width / 2, expected_counts, width, color="#0F172A", label="Expected")
+    ax.bar(positions + width / 2, predicted_counts, width, color="#0E7490", label="Predicted")
+    ax.set_title(title, fontsize=9.2, fontweight="bold", color="#0F172A", pad=6)
+    ax.set_xlabel("Risk class", fontsize=8, color="#64748B")
+    ax.set_ylabel("Configuration count", fontsize=8, color="#64748B")
+    ax.set_xticks(positions, labels, fontsize=8)
+    ax.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.tick_params(axis="x", labelsize=8, length=0)
+    ax.tick_params(axis="y", length=0)
+    ax.legend(loc="upper right", frameon=False, fontsize=6.8)
+    return fig
+
+
+def _per_class_f1_figure(metrics):
+    items = metrics.get("per_class", [])
+    if not items:
+        return None
+    fig, ax = plt.subplots(figsize=(5.2, 2.1))
+    ax.bar([x["label"] for x in items], [x["f1"] for x in items], color="#2563EB")
+    ax.set_ylim(0, 1); ax.set_ylabel("F1", fontsize=8); ax.set_title("Per-class F1", fontsize=10, fontweight="bold")
+    ax.grid(axis="y", color="#E2E8F0"); ax.set_axisbelow(True); ax.spines[["top", "right", "left"]].set_visible(False)
+    return fig
+
+
+def _distribution_figure(values, title, xlabel, color):
+    if not values:
+        return None
+    fig, ax = plt.subplots(figsize=(5.2, 2.1))
+    ax.hist(values, bins=min(24, max(6, len(values) // 10)), color=color, edgecolor="white")
+    ax.set_title(title, fontsize=10, fontweight="bold"); ax.set_xlabel(xlabel, fontsize=8); ax.set_ylabel("Configurations", fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    return fig
+
+
+def _cv_figure(metrics):
+    values = ((metrics.get("cv") or {}).get("macro_f1") or {}).get("values")
+    if not values:
+        return None
+    fig, ax = plt.subplots(figsize=(5.2, 2.1))
+    ax.plot(range(1, len(values) + 1), values, marker="o", color="#0E7490", linewidth=2)
+    ax.set_ylim(0, 1); ax.set_xticks(range(1, len(values) + 1)); ax.set_title("Cross-validation Macro F1", fontsize=10, fontweight="bold")
+    ax.set_xlabel("Fold", fontsize=8); ax.set_ylabel("Macro F1", fontsize=8); ax.grid(axis="y", color="#E2E8F0")
+    return fig
+
+
 # ------------------------------------------------------------------ report
 def generate_report(output_path, data, stats, model=None, features=None):
     """Create a clean, executive-style PDF audit report."""
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    report_id = uuid4().hex[:8].upper()
-    timestamp = datetime.now().strftime("%d %b %Y, %H:%M")
+    report_generated_at = datetime.now()
+    report_id = f"QSR-{report_generated_at:%Y%m%d}-{uuid4().hex[:4].upper()}"
+    timestamp = report_generated_at.strftime("%d %b %Y, %H:%M")
 
     styles = getSampleStyleSheet()
     st = {}
@@ -323,6 +507,12 @@ def generate_report(output_path, data, stats, model=None, features=None):
         avg_confidence = float(pd.to_numeric(frame["risk_confidence"], errors="coerce").mean())
     except Exception:
         avg_confidence = 0.0
+    evaluation = getattr(data, "attrs", {}).get("model_evaluation")
+    if evaluation:
+        classifier_metrics = evaluation["classification"]
+        anomaly_metrics = evaluation["anomaly"]
+    else:
+        classifier_metrics, anomaly_metrics = _model_metrics(frame)
 
     # ---- radar sub-scores ----------------------------------------------------
     try:
@@ -363,7 +553,110 @@ def generate_report(output_path, data, stats, model=None, features=None):
     story.append(Spacer(1, 250 * mm))
     story.append(PageBreak())
 
-    # ================= PAGE 2 - SCORE ==================================
+    # ================= PAGE 2 - MODEL EVALUATION =======================
+    story.append(Paragraph("Model evaluation", st["section"]))
+    story.append(HRFlowable(width="26%", thickness=2.2, color=ACCENT, spaceAfter=8, hAlign="LEFT"))
+    story.append(Paragraph(
+        "Performance summary for the models used in this assessment. Cross-validation prevents a model from being "
+        "scored on the same rows used to train it; Isolation Forest metrics require supplied anomaly labels.",
+        st["body"],
+    ))
+    story.append(Spacer(1, 8))
+    def metric_table(metrics, scope):
+        rows = [
+            [_p("Macro precision", st["cell_h"]), _p("Macro recall", st["cell_h"]), _p("Macro F1 (primary)", st["cell_h"]), _p("Balanced accuracy", st["cell_h"])],
+            [_p(_metric_value(metrics["macro_precision"], percentage=True), st["cell"]), _p(_metric_value(metrics["macro_recall"], percentage=True), st["cell"]), _p(_metric_value(metrics["macro_f1"], percentage=True), st["cell"]), _p(_metric_value(metrics["balanced_accuracy"], percentage=True), st["cell"])],
+            [_p("Weighted F1", st["cell_h"]), _p("Accuracy", st["cell_h"]), _p("MCC", st["cell_h"]), _p("Mean confidence", st["cell_h"])],
+            [_p(_metric_value(metrics["weighted_f1"], percentage=True), st["cell"]), _p(_metric_value(metrics["accuracy"], percentage=True), st["cell"]), _p(_metric_value(metrics["mcc"]), st["cell"]), _p(_metric_value((metrics.get("confidence") or {}).get("mean"), percentage=True), st["cell"])],
+        ]
+        table = Table(rows, colWidths=[45.5 * mm] * 4)
+        table.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 1.4, ACCENT),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, LIGHT),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return table
+
+    story.append(Paragraph("Random Forest classifier", st["band_title"]))
+    classification_scope = (evaluation or {}).get("classification_method", "Weighted multi-class risk-tier classification")
+    story.append(metric_table(classifier_metrics, classification_scope))
+    story.append(Spacer(1, 8))
+    anomaly_scope = (evaluation or {}).get("anomaly_method", "High risk = anomaly; all other tiers = normal")
+    if False and anomaly_metrics:
+        anomaly_rows = [[_p("Precision", st["cell_h"]), _p("Recall", st["cell_h"]), _p("F1", st["cell_h"]), _p("PR-AUC", st["cell_h"]), _p("ROC-AUC", st["cell_h"]), _p("False-positive rate", st["cell_h"])],
+                        [_p(_metric_value(anomaly_metrics["precision"], percentage=True), st["cell"]), _p(_metric_value(anomaly_metrics["recall"], percentage=True), st["cell"]), _p(_metric_value(anomaly_metrics["f1"], percentage=True), st["cell"]), _p(_metric_value(anomaly_metrics["pr_auc"], percentage=True), st["cell"]), _p(_metric_value(anomaly_metrics["roc_auc"], percentage=True), st["cell"]), _p(_metric_value(anomaly_metrics["false_positive_rate"], percentage=True), st["cell"])]]
+        anomaly_table = Table(anomaly_rows, colWidths=[30.3 * mm] * 6)
+        anomaly_table.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 1.4, ACCENT), ("LINEBELOW", (0, 1), (-1, -1), 0.4, LIGHT), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+        story.append(KeepTogether([anomaly_table, Paragraph(f"{anomaly_metrics['samples']:,} evaluated configurations  •  {anomaly_scope}", st["small"])]))
+    else:
+        story.append(Spacer(1, 0))
+    monitoring = (evaluation or {}).get("anomaly_monitoring")
+    if False and monitoring and anomaly_metrics is None:
+        story.append(Spacer(1, 3))
+        story.append(Paragraph(
+            "Operational anomaly monitoring — independently validated anomaly labels unavailable. "
+            f"{monitoring['detected']:,} detected anomalies ({_metric_value(monitoring['alert_rate'], percentage=True)}); "
+            f"mean/median/std {_metric_value(monitoring['mean'])} / {_metric_value(monitoring['median'])} / {_metric_value(monitoring['std'])}; "
+            f"range {_metric_value(monitoring['min'])} to {_metric_value(monitoring['max'])}; P95 {_metric_value(monitoring['p95'])}.", st["small"]
+        ))
+    story.append(Spacer(1, 8))
+    classifier_matrix = _confusion_matrix_figure(classifier_metrics, "Random Forest confusion matrix")
+    if classifier_matrix:
+        story.append(_fig_to_image(classifier_matrix, 100))
+    classifier_outputs = _expected_vs_predicted_figure(classifier_metrics, "Random Forest: expected vs predicted")
+    if classifier_outputs:
+        story.append(_fig_to_image(classifier_outputs, 130))
+        story.append(Paragraph("Expected versus predicted risk-class totals.", st["caption"]))
+    story.append(Paragraph(
+        f"Risk-label source: {(evaluation or {}).get('risk_label_source', 'not recorded')}. "
+        "Rule-derived labels can validate reproducibility, but are not independent real-world validation.", st["small"]
+    ))
+    if (evaluation or {}).get("leakage_warning"):
+        story.append(Paragraph((evaluation or {})["leakage_warning"], st["small"]))
+    story.append(PageBreak())
+
+    # ================= PAGE 3 - EVALUATION DETAIL ======================
+    story.append(Paragraph("Evaluation detail", st["section"]))
+    story.append(HRFlowable(width="26%", thickness=2.2, color=ACCENT, spaceAfter=6, hAlign="LEFT"))
+    per_class = classifier_metrics.get("per_class", [])
+    if per_class:
+        rows = [[_p("Risk class", st["cell_h"]), _p("Precision", st["cell_h"]), _p("Recall", st["cell_h"]), _p("F1", st["cell_h"]), _p("Support", st["cell_h"])]]
+        rows += [[_p(x["label"], st["cell"]), _p(_metric_value(x["precision"], percentage=True), st["cell"]), _p(_metric_value(x["recall"], percentage=True), st["cell"]), _p(_metric_value(x["f1"], percentage=True), st["cell"]), _p(x["support"], st["cell"])] for x in per_class]
+        table = Table(rows, colWidths=[45 * mm, 34 * mm, 34 * mm, 34 * mm, 35 * mm])
+        table.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 1.4, ACCENT), ("LINEBELOW", (0, 1), (-1, -1), .4, LIGHT), ("ALIGN", (1, 0), (-1, -1), "CENTER")]))
+        story.append(table)
+    confidence = classifier_metrics.get("confidence") or {}
+    cv = classifier_metrics.get("cv") or {}
+    story.append(Paragraph(
+        f"Confidence — mean {_metric_value(confidence.get('mean'), percentage=True)}, median {_metric_value(confidence.get('median'), percentage=True)}, "
+        f"standard deviation {_metric_value(confidence.get('std'), percentage=True)}, range {_metric_value(confidence.get('min'), percentage=True)}–{_metric_value(confidence.get('max'), percentage=True)}. "
+        f"Cross-validation — Macro F1 {_metric_value((cv.get('macro_f1') or {}).get('mean'), percentage=True)} ± {_metric_value((cv.get('macro_f1') or {}).get('std'), percentage=True)}; "
+        f"Balanced Accuracy {_metric_value((cv.get('balanced_accuracy') or {}).get('mean'), percentage=True)} ± {_metric_value((cv.get('balanced_accuracy') or {}).get('std'), percentage=True)}; "
+        f"Weighted F1 {_metric_value((cv.get('weighted_f1') or {}).get('mean'), percentage=True)} ± {_metric_value((cv.get('weighted_f1') or {}).get('std'), percentage=True)}.", st["small"]
+    ))
+    figures = [_per_class_f1_figure(classifier_metrics), _distribution_figure(confidence.get("values"), "Random Forest confidence distribution", "Maximum class probability", "#2563EB"), _distribution_figure((monitoring or {}).get("values"), "Isolation Forest anomaly-score distribution", "Anomaly score", "#D97706"), _distribution_figure((monitoring or {}).get("top20") and [x["anomaly_score"] for x in monitoring["top20"]], "Top-20 anomaly scores", "Anomaly score", "#DC2626")]
+    story.append(Table([[_fig_to_image(figures[0], 82) if figures[0] else Paragraph("Unavailable", st["small"]), _fig_to_image(figures[1], 82) if figures[1] else Paragraph("Unavailable", st["small"])], [_fig_to_image(figures[2], 82) if figures[2] else Paragraph("Unavailable", st["small"]), _fig_to_image(figures[3], 82) if figures[3] else Paragraph("Unavailable", st["small"])]], colWidths=[91 * mm, 91 * mm]))
+    runtime = (evaluation or {}).get("runtime", {})
+    def hypothesis(value, threshold, comparator=">="):
+        if value is None: return "NOT TESTABLE"
+        return "PASS" if (value >= threshold if comparator == ">=" else value < threshold) else "FAIL"
+    hypotheses = [[_p("Hypothesis", st["cell_h"]), _p("Result", st["cell_h"]), _p("Evidence", st["cell_h"])],
+                  [_p("H1: Macro F1 >= 0.85", st["cell"]), _p(hypothesis(classifier_metrics.get("macro_f1"), .85), st["cell"]), _p(_metric_value(classifier_metrics.get("macro_f1"), percentage=True), st["cell"])],
+                  [_p("H2: Isolation Forest F1 >= 0.80", st["cell"]), _p(hypothesis((anomaly_metrics or {}).get("f1"), .80), st["cell"]), _p(_metric_value((anomaly_metrics or {}).get("f1"), percentage=True), st["cell"])],
+                  [_p("H3: Mean confidence >= 0.75", st["cell"]), _p(hypothesis(confidence.get("mean"), .75), st["cell"]), _p(_metric_value(confidence.get("mean"), percentage=True), st["cell"])],
+                  [_p("H4: End-to-end runtime < 60 sec", st["cell"]), _p(hypothesis(runtime.get("total"), 60, "<"), st["cell"]), _p(f"{runtime.get('total', 0):.2f} sec", st["cell"])]]
+    story.append(Table(hypotheses, colWidths=[85 * mm, 40 * mm, 57 * mm]))
+    story.append(Paragraph("Runtime (seconds): " + ", ".join(f"{name.replace('_', ' ')} {value:.2f}" for name, value in runtime.items()), st["small"]))
+    if monitoring:
+        story.append(Paragraph("Top-20 anomalous configurations", st["section"]))
+        rows = [[_p(key.replace("_", " "), st["cell_h"]) for key in ["protocol_version", "key_exchange_algorithm", "key_size", "cipher_suite", "anomaly_score"]]]
+        rows += [[_p(item.get(key, "-"), st["cell"]) for key in ["protocol_version", "key_exchange_algorithm", "key_size", "cipher_suite", "anomaly_score"]] for item in monitoring["top20"]]
+        story.append(LongTable(rows, colWidths=[28 * mm, 36 * mm, 18 * mm, 70 * mm, 30 * mm], repeatRows=1))
+    story.append(PageBreak())
+
+    # ================= PAGE 4 - SCORE ==================================
     story.append(Paragraph("&#9679;&#9679;  Q-SHIELD", st["logo"]))
     story.append(Spacer(1, 6))
     story.append(Paragraph("Your PQC Readiness Score", st["score_title"]))
@@ -389,7 +682,7 @@ def generate_report(output_path, data, stats, model=None, features=None):
     story.append(kpi_table)
     story.append(PageBreak())
 
-    # ================= PAGE 3 - HIGH-IMPACT ACTIONS =====================
+    # ================= PAGE 4 - HIGH-IMPACT ACTIONS =====================
     band = Table([[Paragraph("High-impact actions for you", st["band_title"])]], colWidths=[182 * mm])
     band.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), BAND_GRAY),
@@ -418,7 +711,7 @@ def generate_report(output_path, data, stats, model=None, features=None):
     story.append(priority_table)
     story.append(PageBreak())
 
-    # ================= PAGE 4 - RISK PROFILE ============================
+    # ================= PAGE 5 - RISK PROFILE ============================
     story.append(Paragraph("Risk profile", st["section"]))
     story.append(HRFlowable(width="26%", thickness=2.2, color=ACCENT, spaceAfter=8, hAlign="LEFT"))
     profile = Table(
@@ -438,7 +731,7 @@ def generate_report(output_path, data, stats, model=None, features=None):
                                    Paragraph("Fig. 4 - Global feature impact (SHAP, Random Forest).", st["caption"])]))
     story.append(PageBreak())
 
-    # ================= PAGE 5 - LEDGER + METHODOLOGY ====================
+    # ================= PAGE 6 - LEDGER + METHODOLOGY ====================
     story.append(Paragraph("Configuration assessment", st["section"]))
     story.append(HRFlowable(width="26%", thickness=2.2, color=ACCENT, spaceAfter=8, hAlign="LEFT"))
     rows = [[_p(t, st["cell_h"]) for t in ["#", "Configuration", "Risk", "Findings", "Recommended action"]]]
@@ -454,7 +747,7 @@ def generate_report(output_path, data, stats, model=None, features=None):
             _p(row.get("rule_findings", "No issues"), st["cell"]),
             _p(row.get("recommendations", "No action required"), st["cell"]),
         ])
-    ledger = LongTable(rows, colWidths=[7 * mm, 38 * mm, 24 * mm, 56 * mm, 57 * mm], repeatRows=1)
+    ledger = LongTable(rows, colWidths=[12 * mm, 33 * mm, 24 * mm, 56 * mm, 57 * mm], repeatRows=1)
     ledger.setStyle(TableStyle([
         ("LINEBELOW", (0, 0), (-1, 0), 1.4, ACCENT),
         ("LINEBELOW", (0, 1), (-1, -1), 0.4, LIGHT),
@@ -475,4 +768,4 @@ def generate_report(output_path, data, stats, model=None, features=None):
         leftMargin=14 * mm, rightMargin=14 * mm, topMargin=14 * mm, bottomMargin=17 * mm,
         title="AI-PQC TLS Risk Assessment", author="Q-SHIELD local engine",
     )
-    document.build(story, onFirstPage=_make_cover(report_id, timestamp), onLaterPages=_make_footer(report_id))
+    document.build(story, onFirstPage=_make_clean_cover(report_id, timestamp), onLaterPages=_make_clean_footer(report_id))

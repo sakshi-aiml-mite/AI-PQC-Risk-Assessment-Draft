@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
@@ -10,6 +11,7 @@ from src.data_ingestion.ingest_logs import ingest_file
 from src.data_ingestion.schema_validator import validate_schema
 from src.explainability.report_generator import generate_report
 from src.explainability.shap_explainer import explain_model
+from src.model_evaluation import add_anomaly_monitoring, evaluate_models
 from src.recommendations.recommend_engine import generate_recommendations
 from src.risk_classification.random_forest import classify_risk, train_random_forest
 from src.rule_scanner.scanner import scan_tls_config
@@ -39,24 +41,50 @@ def assess_dataframe(
     raw: pd.DataFrame, output_path: str | Path | None = REPORT_PATH, *, generate_pdf: bool = True
 ) -> pd.DataFrame:
     """Assess TLS metadata and optionally write an audit-ready PDF report."""
+    started = perf_counter()
     validate_schema(raw)
     raw = scan_tls_config(raw.copy())
+    supplied_risk_labels = TARGET_COLUMN in raw.columns
+    supplied_anomaly_labels = "is_anomaly" in raw.columns
+    timer = perf_counter()
     features = preprocess_data(raw)
+    preprocessing_time = perf_counter() - timer
     feature_columns = features.columns.tolist()
 
+    timer = perf_counter()
     anomaly_model = train_isolation_forest(features, feature_columns)
     features = detect_anomalies(anomaly_model, features, feature_columns)
+    isolation_time = perf_counter() - timer
     raw[["anomaly_label", "anomaly_score"]] = features[["anomaly_label", "anomaly_score"]]
 
     if TARGET_COLUMN not in raw.columns:
         raw[TARGET_COLUMN] = _bootstrap_risk_labels(raw)
     features[TARGET_COLUMN] = raw[TARGET_COLUMN].values
+    timer = perf_counter()
     classifier = train_random_forest(features, feature_columns, TARGET_COLUMN)
     features = classify_risk(classifier, features, feature_columns)
+    random_forest_time = perf_counter() - timer
     raw[["predicted_risk", "risk_confidence"]] = features[["predicted_risk", "risk_confidence"]]
 
+    timer = perf_counter()
+    evaluation = evaluate_models(
+        features[feature_columns], raw[TARGET_COLUMN],
+        raw["is_anomaly"] if supplied_anomaly_labels else None,
+    )
+    evaluation["risk_label_source"] = "independently supplied" if supplied_risk_labels else "rule-derived"
+    evaluation["leakage_warning"] = (None if supplied_risk_labels else
+        "Potential target leakage: risk_label is derived from rule findings/features used by the classifier; cross-validation measures rule reproduction, not independent real-world validation.")
+    evaluation_time = perf_counter() - timer
+    add_anomaly_monitoring(evaluation, raw)
+
     raw = generate_recommendations(raw)
+    timer = perf_counter()
     raw.attrs["shap_values"] = explain_model(classifier, features, feature_columns)
+    shap_time = perf_counter() - timer
+    evaluation["runtime"] = {"preprocessing": preprocessing_time, "isolation_forest": isolation_time,
+                             "random_forest_training": random_forest_time, "random_forest_evaluation": evaluation_time,
+                             "shap": shap_time, "total": perf_counter() - started}
+    raw.attrs["model_evaluation"] = evaluation
     counts = raw["predicted_risk"].value_counts()
     stats = {"total": len(raw), "high": counts.get("High", 0), "medium": counts.get("Medium", 0), "low": counts.get("Low", 0)}
     if generate_pdf:

@@ -62,6 +62,16 @@ TLS1.3,ECDHE,256,ECDSA-SHA256,TLS_AES_256_GCM_SHA384
 TLS1.2,RSA,1024,SHA1-RSA,TLS_RSA_WITH_AES_128_CBC_SHA
 ```
 
+### Optional validation labels
+
+For independently validated model metrics, add reviewer-supplied labels to the import:
+
+```text
+risk_label,is_anomaly
+```
+
+`risk_label` must be `Low`, `Medium`, or `High`. `is_anomaly` should be `0`/`1` (or `false`/`true`). The report uses stratified cross-validation for these labels. Without `is_anomaly`, Isolation Forest is reported through alert-rate and anomaly-score monitoring rather than misleading precision/recall values.
+
 ## Sample files
 
 Five import-ready CSV files are in `sample_imports/`:
